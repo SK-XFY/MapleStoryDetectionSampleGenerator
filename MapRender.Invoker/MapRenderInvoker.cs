@@ -275,7 +275,8 @@ namespace MapRender.Invoker
             }
             // See WzComparerR2.MainForm.openWz()
             _wzStructure = new Wz_Structure();
-            if (string.Equals(Path.GetExtension(baseWzPath), ".ms", StringComparison.OrdinalIgnoreCase))
+            string[] msFileExtensions = { ".ms", ".mn" };
+            if (msFileExtensions.Any(ext => string.Equals(Path.GetExtension(baseWzPath), ext, StringComparison.OrdinalIgnoreCase)))
             {
                 _wzStructure.LoadMsFile(baseWzPath);
             }
@@ -287,9 +288,12 @@ namespace MapRender.Invoker
                     string packsDir = Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(baseWzPath)), "Packs");
                     if (Directory.Exists(packsDir))
                     {
-                        foreach (var msFile in Directory.GetFiles(packsDir, "*.ms"))
+                        foreach (var ext in msFileExtensions)
                         {
-                            _wzStructure.LoadMsFile(msFile);
+                            foreach (var msFile in Directory.GetFiles(packsDir, $"*{ext}"))
+                            {
+                                _wzStructure.LoadMsFile(msFile);
+                            }
                         }
                     }
                 }
