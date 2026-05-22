@@ -8,6 +8,11 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CharaSimResource", "WzComparerR2\CharaSimResource\CharaSimResource.csproj", "{54797F38-A12C-4202-92A4-1A3DDCE914B7}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WzComparerR2", "WzComparerR2\WzComparerR2\WzComparerR2.csproj", "{5E883BE2-2009-4517-8026-4B90DEB83884}"
+	ProjectSection(ProjectDependencies) = postProject
+		{B7452488-C9CC-463E-B404-7830658B0A98} = {B7452488-C9CC-463E-B404-7830658B0A98}
+	EndProjectSection
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WzComparerR2.Updater", "WzComparerR2\WzComparerR2.Updater\WzComparerR2.Updater.csproj", "{B7452488-C9CC-463E-B404-7830658B0A98}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WzComparerR2.Avatar", "WzComparerR2\WzComparerR2.Avatar\WzComparerR2.Avatar.csproj", "{A0753218-2C58-4E4A-9017-A435D2E5F639}"
 EndProject
@@ -131,6 +136,18 @@ Global
 		{11E362E4-B8FB-4BD4-B0D3-BA078D5FB002}.Release|x64.Build.0 = Release|Any CPU
 		{11E362E4-B8FB-4BD4-B0D3-BA078D5FB002}.Release|x86.ActiveCfg = Release|Any CPU
 		{11E362E4-B8FB-4BD4-B0D3-BA078D5FB002}.Release|x86.Build.0 = Release|Any CPU
+		{B7452488-C9CC-463E-B404-7830658B0A98}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B7452488-C9CC-463E-B404-7830658B0A98}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B7452488-C9CC-463E-B404-7830658B0A98}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{B7452488-C9CC-463E-B404-7830658B0A98}.Debug|x64.Build.0 = Debug|Any CPU
+		{B7452488-C9CC-463E-B404-7830658B0A98}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{B7452488-C9CC-463E-B404-7830658B0A98}.Debug|x86.Build.0 = Debug|Any CPU
+		{B7452488-C9CC-463E-B404-7830658B0A98}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B7452488-C9CC-463E-B404-7830658B0A98}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B7452488-C9CC-463E-B404-7830658B0A98}.Release|x64.ActiveCfg = Release|Any CPU
+		{B7452488-C9CC-463E-B404-7830658B0A98}.Release|x64.Build.0 = Release|Any CPU
+		{B7452488-C9CC-463E-B404-7830658B0A98}.Release|x86.ActiveCfg = Release|Any CPU
+		{B7452488-C9CC-463E-B404-7830658B0A98}.Release|x86.Build.0 = Release|Any CPU
 		{C28EA64C-2C4C-40CE-8FF9-EF74E50CEA5B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{C28EA64C-2C4C-40CE-8FF9-EF74E50CEA5B}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{C28EA64C-2C4C-40CE-8FF9-EF74E50CEA5B}.Debug|x64.ActiveCfg = Debug|Any CPU
