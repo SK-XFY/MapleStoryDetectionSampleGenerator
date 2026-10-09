@@ -24,6 +24,42 @@ namespace MapRender.Invoker
 
         public int Height { get; set; }
 
+        /// <summary>
+        /// Current Mob animation state at capture time. Non-Mob targets keep None.
+        /// </summary>
+        public MobCombatState CombatState { get; set; }
+
+        public string AnimationName { get; set; }
+
+        public int AnimationFrame { get; set; } = -1;
+
+        public int EffectSkillId { get; set; }
+
+        /// <summary>
+        /// Estimated visible fraction after synthetic foreground/effect overlays.
+        /// </summary>
+        public double VisibleFraction { get; set; } = 1.0;
+
+        /// <summary>
+        /// Synthetic foreground source used by preview diagnostics (PLAYER/NPC/DROP/MAP).
+        /// Dataset writers intentionally ignore this field.
+        /// </summary>
+        public string OcclusionSource { get; set; }
+
+        /// <summary>
+        /// True when the renderer intentionally captured the Mob's translucent spawn moment.
+        /// It remains an Alive/Mob label; this flag is for preview diagnostics only.
+        /// </summary>
+        public bool IsSpawnTransparent { get; set; }
+
+        public double RenderOpacity { get; set; } = 1.0;
+
+        /// <summary>
+        /// False keeps the item available to the state-crop writer while excluding it
+        /// from object-detection annotations.
+        /// </summary>
+        public bool DetectionEnabled { get; set; } = true;
+
         public TargetItem() { }
 
         public TargetItem(SceneItem item)
@@ -64,5 +100,23 @@ namespace MapRender.Invoker
             return ObjectClass.Unknown;
         }
 
+    }
+
+    public enum MobCombatState
+    {
+        None = 0,
+        Alive,
+        Hit,
+        Dying,
+        Unknown
+    }
+
+    public enum MobRenderState
+    {
+        Automatic = 0,
+        Alive,
+        Hit,
+        Dying,
+        Spawning
     }
 }

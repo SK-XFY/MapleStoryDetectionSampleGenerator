@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git submodule *)",
+      "Bash(dotnet --version)",
+      "Bash(dotnet build *)",
+      "Bash(./MapleStory.MachineLearningSampleGenerator.exe --help)",
+      "PowerShell([guid]::NewGuid\\(\\).ToString\\(\\).ToUpper\\(\\).)",
+      "Bash(xargs -n1 basename)",
+      "Bash(taskkill /F /PID 9196)",
+      "Bash(tasklist)",
+      "PowerShell(Get-Process *)",
+      "Bash(git -C WzComparerR2 status --short)",
+      "Bash(git checkout *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(xxd)"
+    ]
+  }
+}

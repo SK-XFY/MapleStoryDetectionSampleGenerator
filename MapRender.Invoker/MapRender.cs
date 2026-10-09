@@ -19,6 +19,11 @@ namespace MapRender.Invoker
     {
         private volatile Stream _screenShotStream;
         private volatile ScreenShotData _screenShotData;
+        private readonly object _mobStateLock = new object();
+        private MobRenderState _forcedMobState = MobRenderState.Automatic;
+        private double _forcedMobProgress;
+        private int _requestedMobStateVersion;
+        private int _appliedMobStateVersion;
 
         public MapRender(Wz_Image img) : base()
         {
@@ -50,6 +55,24 @@ namespace MapRender.Invoker
             return ret;
         }
 
+        public void SetMobRenderState(MobRenderState state, double normalizedProgress)
+        {
+            int version;
+            lock (_mobStateLock)
+            {
+                _forcedMobState = state;
+                _forcedMobProgress = Math.Max(0.0, Math.Min(0.999, normalizedProgress));
+                version = ++_requestedMobStateVersion;
+            }
+
+            // Sampling can otherwise enter TakeScreenShot midway through a render tick:
+            // metadata would say Spawning while pixels still contain the previous Dying frame.
+            // Wait until the render thread has applied this exact request once.
+            SpinWait.SpinUntil(
+                () => Volatile.Read(ref _appliedMobStateVersion) >= version,
+                millisecondsTimeout: 2000);
+        }
+
         /// <summary>
         /// Switch to a new map
         /// </summary>
@@ -72,6 +95,7 @@ namespace MapRender.Invoker
 
         protected override void Draw(GameTime gameTime)
         {
+            ApplyForcedMobState();
             base.Draw(gameTime);
             if (_screenShotStream != null)
             {
@@ -109,10 +133,20 @@ namespace MapRender.Invoker
                 {
                     if (item is LifeItem life)
                     {
-                        var rectangle = this.GetLifeBoundingBox(life);
+                        var rectangle = this.GetLifeBoundingBox(life) ?? GetCurrentFrameRectangle(life);
                         if (rectangle.HasValue)
                         {
-                            itemsOnMap.Add(new TargetItem(life, rectangle.Value, RenderObjectType.Mob) { Id = life.ID });
+                            var target = new TargetItem(life, rectangle.Value, RenderObjectType.Mob) { Id = life.ID };
+                            PopulateMobAnimation(target, life);
+                            lock (_mobStateLock)
+                            {
+                                if (_forcedMobState == MobRenderState.Spawning)
+                                {
+                                    target.IsSpawnTransparent = true;
+                                    target.RenderOpacity = GetSpawnOpacity(life, _forcedMobProgress);
+                                }
+                            }
+                            itemsOnMap.Add(target);
                         }
                     }
                 }
@@ -124,6 +158,153 @@ namespace MapRender.Invoker
                     GetScreenShotMapData(node.Nodes[i], ref screenShotData);
                 }
             }
+        }
+
+        private static Microsoft.Xna.Framework.Rectangle? GetCurrentFrameRectangle(LifeItem life)
+        {
+            if (!(life.View?.Animator is StateMachineAnimator animator) ||
+                !(animator.Data is StateMachineAnimator.FrameStateMachineData data) ||
+                data.FrameAnimator?.CurrentFrame == null)
+            {
+                return null;
+            }
+            Microsoft.Xna.Framework.Rectangle raw = data.FrameAnimator.CurrentFrame.Rectangle;
+            if (raw.Width <= 0 || raw.Height <= 0)
+            {
+                return null;
+            }
+            return new Microsoft.Xna.Framework.Rectangle(
+                life.X + raw.X,
+                life.Cy + raw.Y,
+                raw.Width,
+                raw.Height);
+        }
+
+        private void ApplyForcedMobState()
+        {
+            MobRenderState requestedState;
+            double progress;
+            int requestedVersion;
+            lock (_mobStateLock)
+            {
+                requestedState = _forcedMobState;
+                progress = _forcedMobProgress;
+                requestedVersion = _requestedMobStateVersion;
+            }
+            if (requestedState == MobRenderState.Automatic || mapData?.Scene == null)
+            {
+                Volatile.Write(ref _appliedMobStateVersion, requestedVersion);
+                return;
+            }
+
+            foreach (LifeItem life in mapData.Scene.Mobs)
+            {
+                if (!(life.View?.Animator is StateMachineAnimator animator))
+                {
+                    continue;
+                }
+                string action = SelectAction(animator, requestedState, life);
+                if (action == null)
+                {
+                    continue;
+                }
+                animator.SetAnimation(action);
+                var data = animator.Data as StateMachineAnimator.FrameStateMachineData;
+                if (data?.FrameAnimator != null && data.FrameAnimator.Length > 1)
+                {
+                    data.FrameAnimator.Update(TimeSpan.FromMilliseconds(
+                        Math.Min(data.FrameAnimator.Length - 1, data.FrameAnimator.Length * progress)));
+                }
+                if (requestedState == MobRenderState.Spawning &&
+                    data?.FrameAnimator?.CurrentFrame != null)
+                {
+                    double opacity = GetSpawnOpacity(life, progress);
+                    data.FrameAnimator.CurrentFrame.A0 = (int)Math.Round(
+                        data.FrameAnimator.CurrentFrame.A0 * opacity);
+                }
+            }
+            Volatile.Write(ref _appliedMobStateVersion, requestedVersion);
+        }
+
+        private static string SelectAction(
+            StateMachineAnimator animator,
+            MobRenderState requestedState,
+            LifeItem life)
+        {
+            if (requestedState == MobRenderState.Spawning)
+            {
+                string[] spawnNames = { "regen", "spawn", "appear", "birth" };
+                foreach (string name in spawnNames)
+                {
+                    string exact = animator.Data.States.FirstOrDefault(state =>
+                        string.Equals(state, name, StringComparison.OrdinalIgnoreCase));
+                    if (exact != null)
+                    {
+                        return exact;
+                    }
+                }
+                string prefixed = animator.Data.States.FirstOrDefault(state =>
+                    spawnNames.Any(name => state.StartsWith(name, StringComparison.OrdinalIgnoreCase)));
+                return prefixed ?? SelectAliveAction(animator, life);
+            }
+            string prefix = requestedState == MobRenderState.Hit
+                ? "hit"
+                : requestedState == MobRenderState.Dying
+                    ? "die"
+                    : null;
+            if (prefix != null)
+            {
+                string preferred = prefix + "1";
+                return animator.Data.States.FirstOrDefault(state =>
+                           string.Equals(state, preferred, StringComparison.OrdinalIgnoreCase))
+                       ?? animator.Data.States.FirstOrDefault(state =>
+                           state.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                       ?? SelectAliveAction(animator, life);
+            }
+            return SelectAliveAction(animator, life);
+        }
+
+        private static string SelectAliveAction(StateMachineAnimator animator, LifeItem life)
+        {
+            string[] preferred = { "stand", "move", "fly", "attack1", "jump", "regen" };
+            var available = preferred
+                .Where(name => animator.Data.States.Any(state =>
+                    string.Equals(state, name, StringComparison.OrdinalIgnoreCase)))
+                .ToArray();
+            if (available.Length > 0)
+            {
+                string selected = available[Math.Abs(life.Index + life.ID) % available.Length];
+                return animator.Data.States.First(state =>
+                    string.Equals(state, selected, StringComparison.OrdinalIgnoreCase));
+            }
+            return animator.Data.States.FirstOrDefault(state =>
+                !state.StartsWith("hit", StringComparison.OrdinalIgnoreCase) &&
+                !state.StartsWith("die", StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static void PopulateMobAnimation(TargetItem target, LifeItem life)
+        {
+            if (!(life.View?.Animator is StateMachineAnimator animator))
+            {
+                target.CombatState = MobCombatState.Unknown;
+                return;
+            }
+            string action = animator.Data.SelectedState ?? string.Empty;
+            target.AnimationName = action;
+            target.AnimationFrame = (animator.Data as StateMachineAnimator.FrameStateMachineData)
+                ?.FrameAnimator?.CurrentFrameIndex ?? -1;
+            target.CombatState = action.StartsWith("die", StringComparison.OrdinalIgnoreCase)
+                ? MobCombatState.Dying
+                : action.StartsWith("hit", StringComparison.OrdinalIgnoreCase)
+                    ? MobCombatState.Hit
+                    : MobCombatState.Alive;
+        }
+
+        private static double GetSpawnOpacity(LifeItem life, double progress)
+        {
+            double opacity = 0.35 + Math.Max(0.0, Math.Min(1.0, progress)) * 0.40;
+            int variation = Math.Abs(life.Index + life.ID) % 5 - 2;
+            return Math.Max(0.28, Math.Min(0.80, opacity + variation * 0.035));
         }
 
     }

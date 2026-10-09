@@ -151,13 +151,14 @@ namespace MapleStory.Sampler
                 i.Y -= camRectangle.Y;
 
                 // Validation
-                if (i.Height < 0 || i.Width < 0)
+                if (i.Height <= 0 || i.Width <= 0)
                 {
-                    throw new InvalidDataException("Items Height or Width is negative!!");
+                    return;
                 }
 
                 // Not show in screenshots at all
-                if (i.X > imgWidth || i.Y > imgHeight)
+                if (i.X >= imgWidth || i.Y >= imgHeight ||
+                    i.X + i.Width <= 0 || i.Y + i.Height <= 0)
                 {
                     return;
                 }
@@ -199,7 +200,12 @@ namespace MapleStory.Sampler
                     inCameraHeight = imgHeight - i.Y;
                 }
 
-                double inCameraArea = inCameraHeight * imgWidth;
+                if (inCameraWidth <= 0 || inCameraHeight <= 0)
+                {
+                    return;
+                }
+
+                double inCameraArea = inCameraHeight * inCameraWidth;
                 if (inCameraArea / itemArea >= ITEM_PARTIAL_AREA_THRESHOLD)
                 {
                     i.Width = inCameraWidth;

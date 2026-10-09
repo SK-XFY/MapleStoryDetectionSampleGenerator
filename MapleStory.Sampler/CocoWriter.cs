@@ -47,7 +47,7 @@ namespace MapleStory.Sampler
             {
                 Directory.CreateDirectory(RootPath);
             }
-            CleanDirectory(RootPath);
+            EnsureDirectoryIsEmpty(RootPath);
             _trainingImagesPath = Path.Combine(RootPath, TrainingDirectory);
             Directory.CreateDirectory(_trainingImagesPath);
             _validationImagesPath = Path.Combine(RootPath, ValidationDirectory);
@@ -132,6 +132,10 @@ namespace MapleStory.Sampler
         {
             foreach (var sampleItem in sample.Items)
             {
+                if (!sampleItem.DetectionEnabled)
+                {
+                    continue;
+                }
                 ObjectClass type = sampleItem.Type;
                 if (!_occurrenceClasses.Contains(type))
                 {
@@ -145,20 +149,13 @@ namespace MapleStory.Sampler
             }
         }
 
-        private static void CleanDirectory(string path)
+        private static void EnsureDirectoryIsEmpty(string path)
         {
             if (Directory.EnumerateFileSystemEntries(path).Any())
             {
-                Console.WriteLine("Warning: Target RootPath Is Not Empty. Cleaning target path...");
-                DirectoryInfo directory = new DirectoryInfo(path);
-                foreach (var fileInfo in directory.GetFiles())
-                {
-                    fileInfo.Delete();
-                }
-                foreach (var directoryInfo in directory.GetDirectories())
-                {
-                    directoryInfo.Delete(true);
-                }
+                throw new IOException(
+                    $"Target dataset directory is not empty: {path}. " +
+                    "Choose a new output directory; existing files will not be deleted.");
             }
         }
 

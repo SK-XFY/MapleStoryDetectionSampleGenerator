@@ -16,7 +16,7 @@ using WzComparerR2.WzLib;
 
 namespace MapRender.Invoker
 {
-    public class MapRenderInvoker : MapRenderInvokerBase
+    public class MapRenderInvoker : MapRenderInvokerBase, IDisposable
     {
         private Wz_Image _currentMapImage;
         private StringLinker _stringLinker;
@@ -24,6 +24,8 @@ namespace MapRender.Invoker
         private MapRender _mapRender;
         private Camera _camera;
         private volatile bool _isRunning;
+        private volatile bool _stopRequested;
+        private readonly int[] _mobIds;
 
         public bool IsRunning => _isRunning;
 
@@ -45,10 +47,18 @@ namespace MapRender.Invoker
 
         public int CurrentMap { get; private set; }
 
-        public MapRenderInvoker(string mapleStoryPath, Encoding encoding, bool disableImgCheck = false)
+        public MapRenderInvoker(
+            string mapleStoryPath,
+            Encoding encoding,
+            bool disableImgCheck = false,
+            IEnumerable<int> mobIds = null)
             : base(mapleStoryPath, encoding, disableImgCheck)
         {
+            _mobIds = (mobIds ?? Enumerable.Empty<int>()).Distinct().ToArray();
+            WzComparerR2.Config.ConfigManager.RegisterAllSection(
+                typeof(WzComparerR2.MapRender.Config.MapRenderConfig).Assembly);
             _isRunning = false;
+            _stopRequested = false;
             AddFindWzEventHandler();
         }
 
@@ -68,23 +78,31 @@ namespace MapRender.Invoker
 
         ~MapRenderInvoker()
         {
-            _renderThread?.Abort();
+            Stop();
         }
 
         ///<inheritdoc/>
         public override void LoadMap(string imgText)
         {
-            CurrentMap = int.Parse(imgText);
-            imgText = imgText.EndsWith(".img") ? imgText : (imgText + ".img");
-            _currentMapImage = WzTreeSearcher.SearchForMap(_wzStructure.WzNode, imgText);
-            Exception ex;
-            _currentMapImage.TryExtract(out ex);
-            if (ex != null)
+            string mapIdText = imgText.EndsWith(".img", StringComparison.OrdinalIgnoreCase)
+                ? imgText.Substring(0, imgText.Length - 4)
+                : imgText;
+            CurrentMap = int.Parse(mapIdText);
+            if (_extractedImgDataSource != null)
             {
-                throw ex;
+                _currentMapImage = _extractedImgDataSource.LoadMapImage(CurrentMap);
             }
+            else
+            {
+                string imageName = mapIdText + ".img";
+                _currentMapImage = WzTreeSearcher.SearchForMap(_wzStructure.WzNode, imageName);
+            }
+            ExtractAndMergeMobs(_currentMapImage);
             _stringLinker = new StringLinker();
-            _stringLinker.Load(PluginManager.FindWz(Wz_Type.String).GetValueEx<Wz_File>(null));
+            if (_extractedImgDataSource == null)
+            {
+                _stringLinker.Load(PluginManager.FindWz(Wz_Type.String).GetValueEx<Wz_File>(null));
+            }
         }
 
         /// <inheritdoc/>
@@ -110,6 +128,11 @@ namespace MapRender.Invoker
                         _mapRender.Run();
                     }
                 }
+                catch (Exception) when (_stopRequested)
+                {
+                    // MonoGame WinForms may tick once after Exit() clears its window.
+                    // This is expected during an explicit generator shutdown.
+                }
                 finally
                 {
                     _mapRender = null;
@@ -131,8 +154,105 @@ namespace MapRender.Invoker
 
         public override void SwitchMap(string imgText)
         {
-            CurrentMap = int.Parse(imgText);
+            string mapIdText = imgText.EndsWith(".img", StringComparison.OrdinalIgnoreCase)
+                ? imgText.Substring(0, imgText.Length - 4)
+                : imgText;
+            CurrentMap = int.Parse(mapIdText);
+            Wz_Image mapImage;
+            if (_extractedImgDataSource != null)
+            {
+                mapImage = _extractedImgDataSource.LoadMapImage(CurrentMap);
+            }
+            else
+            {
+                mapImage = WzTreeSearcher.SearchForMap(_wzStructure.WzNode, mapIdText + ".img");
+            }
+            ExtractAndMergeMobs(mapImage);
             _mapRender.SwitchToNewMap(CurrentMap);
+        }
+
+        private void ExtractAndMergeMobs(Wz_Image mapImage)
+        {
+            if (mapImage == null)
+            {
+                throw new InvalidOperationException($"Map {CurrentMap:D9}.img could not be loaded.");
+            }
+
+            mapImage.TryExtract(out Exception error);
+            if (error != null)
+            {
+                throw error;
+            }
+
+            if (_mobIds.Length == 0)
+            {
+                return;
+            }
+
+            foreach (int mobId in _mobIds)
+            {
+                if (PluginManager.FindWz($@"Mob\{mobId:D7}.img") == null)
+                {
+                    throw new FileNotFoundException(
+                        $"Cannot find Mob IMG for --mobId {mobId}: Mob\\{mobId:D7}.img");
+                }
+            }
+
+            Wz_Node lifeNode = mapImage.Node.Nodes["life"];
+            if (lifeNode == null)
+            {
+                throw new InvalidOperationException(
+                    $"Map {CurrentMap:D9}.img has no life node, so --mobId cannot place a mob.");
+            }
+
+            bool isCategory = lifeNode.Nodes["isCategory"].GetValueEx<int>(0) != 0;
+            IEnumerable<Wz_Node> lifeEntries = isCategory
+                ? lifeNode.Nodes.SelectMany(node => node.Nodes)
+                : lifeNode.Nodes;
+            List<Wz_Node> mobEntries = lifeEntries
+                .Where(node =>
+                    string.Equals(node.Nodes["type"].GetValueEx<string>(null), "m",
+                        StringComparison.OrdinalIgnoreCase) &&
+                    node.Nodes["id"] != null)
+                .ToList();
+
+            if (mobEntries.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    $"Map {CurrentMap:D9}.img has no mob spawn slots to use for --mobId.");
+            }
+
+            int[] mapMobIds = mobEntries
+                .Select(node => node.Nodes["id"].GetValueEx<int>(0))
+                .Where(id => id > 0)
+                .Distinct()
+                .ToArray();
+            int[] mergedMobIds = mapMobIds
+                .Concat(_mobIds)
+                .Distinct()
+                .ToArray();
+
+            if (mergedMobIds.Length > mobEntries.Count)
+            {
+                throw new InvalidOperationException(
+                    $"Map {CurrentMap:D9}.img has {mobEntries.Count} mob spawn slot(s), " +
+                    $"but retaining its {mapMobIds.Length} mob type(s) and adding --mobId requires " +
+                    $"{mergedMobIds.Length} slots.");
+            }
+
+            for (int index = 0; index < mobEntries.Count; index++)
+            {
+                mobEntries[index].Nodes["id"].Value = mergedMobIds[index % mergedMobIds.Length];
+            }
+
+            Console.WriteLine(
+                "Map {0:D9}: distributed {1} map Mob ID(s) plus {2} extra ID(s) across " +
+                "{3} spawn slot(s): {4}",
+                CurrentMap,
+                mapMobIds.Length,
+                mergedMobIds.Length - mapMobIds.Length,
+                mobEntries.Count,
+                string.Join(", ", mergedMobIds));
         }
 
         public void MoveCamera(int centerX, int centerY)
@@ -146,6 +266,78 @@ namespace MapRender.Invoker
             return _mapRender.TakeScreenShot(stream);
         }
 
+        public void SetMobRenderState(MobRenderState state, double normalizedProgress = 0.0)
+        {
+            if (!_isRunning || _mapRender == null)
+            {
+                throw new InvalidOperationException("Map renderer is not running.");
+            }
+            _mapRender.SetMobRenderState(state, normalizedProgress);
+        }
+
+        public void Stop()
+        {
+            _stopRequested = true;
+            _isRunning = false;
+            MapRender render = _mapRender;
+            if (render != null)
+            {
+                try
+                {
+                    render.Exit();
+                }
+                catch
+                {
+                    // The game window may already be tearing down.
+                }
+            }
+            if (_renderThread != null && _renderThread.IsAlive &&
+                Thread.CurrentThread != _renderThread)
+            {
+                _renderThread.Join(TimeSpan.FromSeconds(5));
+            }
+        }
+
+        public void Dispose()
+        {
+            Stop();
+            GC.SuppressFinalize(this);
+        }
+
+        public IReadOnlyList<byte[]> CreateRandomAvatarOccluders(int count)
+        {
+            return new RandomAvatarGenerator(_extractedImgDataSource).Create(count);
+        }
+
+        public IReadOnlyList<byte[]> CreateMapObjectOccluders(int count)
+        {
+            return new MapObjectOccluderGenerator(_currentMapImage).Create(count);
+        }
+
+        public IReadOnlyList<byte[]> CreateNpcOccluders(int count)
+        {
+            return new NpcOccluderGenerator(_extractedImgDataSource, _currentMapImage).Create(count);
+        }
+
+        public IReadOnlyList<byte[]> CreateDropItemOccluders(int count)
+        {
+            return new DropItemOccluderGenerator(_extractedImgDataSource).Create(count);
+        }
+
+        public IReadOnlyList<MobOccluderAsset> CreateMobOccluders(int count)
+        {
+            return new MobOccluderGenerator(_currentMapImage).Create(count);
+        }
+
+        public IReadOnlyList<SkillEffectAsset> CreateSkillEffects(
+            int count,
+            IEnumerable<int> skillIds,
+            int characterLevel = 0)
+        {
+            return new SkillEffectGenerator(_extractedImgDataSource)
+                .Create(count, skillIds, characterLevel);
+        }
+
         #region COPIED_CODE
 
         /// <summary>
@@ -155,6 +347,15 @@ namespace MapRender.Invoker
         /// <see cref="WzComparerR2.MainForm.CharaSimLoader_WzFileFinding"/>
         private void CharaSimLoader_WzFileFinding(object sender, WzComparerR2.FindWzEventArgs e)
         {
+            if (_extractedImgDataSource != null)
+            {
+                if (!string.IsNullOrEmpty(e.FullPath))
+                {
+                    e.WzNode = _extractedImgDataSource.Resolve(e.FullPath);
+                }
+                return;
+            }
+
             string[] fullPath = null;
             if (!string.IsNullOrEmpty(e.FullPath)) //用fullpath作为输入参数
             {
@@ -252,6 +453,7 @@ namespace MapRender.Invoker
     {
 
         protected readonly Wz_Structure _wzStructure;
+        protected readonly ExtractedImgDataSource _extractedImgDataSource;
 
         /// <summary>
         /// Provide base methods to open MapleStory data directory.
@@ -271,7 +473,16 @@ namespace MapRender.Invoker
             string baseWzPath = Path.Combine(mapleStoryPath, MapleStoryPathHelper.MapleStoryBaseWzName);
             if (!File.Exists(baseWzPath))
             {
-                throw new ArgumentException($"Cannot find {MapleStoryPathHelper.MapleStoryBaseWzName} in given directory {mapleStoryPath}.");
+                string dataRoot = FindExtractedDataRoot(mapleStoryPath);
+                if (dataRoot == null)
+                {
+                    throw new ArgumentException(
+                        $"Cannot find {MapleStoryPathHelper.MapleStoryBaseWzName} or an extracted Data directory in {mapleStoryPath}.");
+                }
+
+                _wzStructure = new Wz_Structure();
+                _extractedImgDataSource = new ExtractedImgDataSource(dataRoot, encoding);
+                return;
             }
             // See WzComparerR2.MainForm.openWz()
             _wzStructure = new Wz_Structure();
@@ -302,6 +513,19 @@ namespace MapRender.Invoker
             {
                 _wzStructure.Load(baseWzPath, true);
             }
+        }
+
+        private static string FindExtractedDataRoot(string suppliedPath)
+        {
+            string[] candidates =
+            {
+                suppliedPath,
+                Path.Combine(suppliedPath, "Data")
+            };
+
+            return candidates.FirstOrDefault(path =>
+                Directory.Exists(Path.Combine(path, "Map", "Map")) &&
+                Directory.Exists(Path.Combine(path, "Mob")));
         }
 
         /// <summary>

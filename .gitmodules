@@ -1,4 +1,4 @@
 [submodule "WzComparerR2"]
 	path = WzComparerR2
-	url = git@github.com:charlescao460/WzComparerR2.git
+	url = https://github.com/SK-XFY/WzComparerR2.git
 	branch = .

@@ -95,6 +95,10 @@ namespace MapleStory.Sampler
 
         private void AddItem(TargetItem item)
         {
+            if (!item.DetectionEnabled)
+            {
+                return;
+            }
             float x = item.X;
             float y = item.Y;
             float x2 = x + item.Width;
